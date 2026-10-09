@@ -12,20 +12,23 @@ All times are UTC ISO 8601. Distances are km, speeds km/s, delta-v m/s. Results 
 | `GET /run/{run_id}/status` | `{"run_id", "status", "stage", "percent", "log", "error"}`. `status` is `RUNNING`, `DONE` or `FAILED` |
 | `GET /monitor` | `{"running", "current_run", "last_run", "run_count", "next_run", "interval_hours", "scheduler_on"}` |
 | `GET /latest` | The latest run's `run.json`: mode, window, statistics, risk-level counts, duration. 404 before the first run |
-| `GET /events?limit=50&level=RED` | List of events, highest worst-case probability first. `level` is optional |
-| `GET /events/{event_id}` | `{"event", "plan", "track", "encounter"}` (see below) |
+| `GET /events?limit=50&level=RED&plan=MANEUVER` | List of events, highest worst-case probability first. `level` and `plan` are optional filters. Each event carries `plan_decision` (`MANEUVER`, `MONITOR` or `null` for green events), so a table can mark the passes with a burn planned without a second request |
+| `GET /events/{event_id}` | `{"event", "plan", "what_if_plan", "track", "encounter"}` (see below) |
 | `GET /events/{event_id}/plan` | The plan for one event. 404 for green events, which have none |
-| `GET /alerts?since=<run_id>` | Alerts for the latest run, or for all runs after `since`. Empty until teammate C's watcher is running |
+| `GET /alerts?since=<run_id>&kind=NEW&severity=CRITICAL&limit=20` | Alerts for the latest run, or for all runs after `since`. All parameters are optional. `kind` is `NEW`, `ESCALATED`, `DOWNGRADED`, `CLEARED` or `PLAN_READY`; `severity` is `CRITICAL`, `WARNING` or `INFO`. A full-sky run produces hundreds of alerts, so filter them. Written by teammate C's alert engine at the end of each run; empty without that pack |
 | `GET /summary` | The latest run's summary from teammate C's pack. 404 without it |
 | `GET /objects/{norad_id}/track?hours=3&step_s=30` | `{"norad_id", "name", "object_type", "start", "step_s", "positions_km"}`, starting now. Only objects in the latest run's `catalog.json` |
-| `GET /replay/2009` | `{"run", "events", "plans", "predictions"}`. 404 until the replay is built |
-| `GET /validation` | The SOCRATES comparison. 404 until it is built |
-| `GET /addons` | Which teammate packs and outputs are present |
+| `GET /replay/2009` | `{"run", "events", "plans", "what_if_plans", "predictions", "notes"}`. 404 until the replay is built with `python -m fusion.replay.replay_2009` |
+| `GET /validation` | The comparison with CelesTrak SOCRATES, built by `python -m fusion.validation`: `{"generated", "source", "summary", "same_input", "latest_run", "report"}`. `summary` is two sentences for display. `same_input` is our closest-approach code run on the element sets CelesTrak used; `latest_run` matches our latest run against CelesTrak's list. Each has `all_matches`, `same_element_sets` and `newer_element_sets` (`matched` plus median, 90th percentile and maximum of the time, distance and speed differences) and `pairs` (our distance and CelesTrak's, for a scatter chart); `latest_run` also has `coverage`. `report` is a path under `/addons/files/` to the full validation report with its charts. 404 until it is built |
+| `GET /addons` | `{"hooks", "packs", "validation_report", "alerts_for_latest_run", "briefings_for_latest_run", "cdm_for_latest_run", "replay_2009", "pitch_files"}`. The briefing and CDM entries are counts |
 | `GET /addons/files/{path}` | A file from `addons/` (json, md, png, txt, csv only) |
-| `GET /runs/latest/files/{path}` | A file from the latest run folder, such as `briefings/<id>.briefing.json` |
+| `GET /runs/latest/files/{path}` | A file from the latest run folder: `briefings/<event_id>.briefing.json`, `cdm/<event_id>.cdm.txt`, `summary.json`. Add `?source=replay` for the replay folder |
 | `GET /` | The plain test page |
+| `GET /landing` | The story page for visitors (`landing/index.html`), which reads its live numbers from `/latest` |
 
 The event routes accept `?source=replay` to read the 2009 replay folder instead of the latest run.
+
+Briefings and CDM files exist for red and amber events only, and only when teammate C's pack is present. A missing file returns 404.
 
 ## Stages in a run's log
 
@@ -53,7 +56,10 @@ The event routes accept `?source=replay` to read the 2009 replay folder instead 
 
 - `synthetic: true` marks the test object; always label it on screen.
 - `pc_max` is the worst-case probability and decides `risk_level`: RED at 1e-4 or more, AMBER at 1e-5 or more.
-- `first_seen` and `history` are filled by teammate C's watcher; `history` entries are `{"run_id", "pc_max", "miss_distance_km"}`.
+- `first_seen` and `history` are filled by teammate C's alert engine at the end of each run; `history` entries are `{"run_id", "pc_max", "miss_distance_km"}`, oldest first. Only runs of the same mode and window are compared.
+- `sigma_source` is `MEASURED` when both objects' uncertainty came from teammate B's measurement of real element-set history, otherwise `MODELLED` (the assumed table).
+- `pc_predicted_final` is a probability: where teammate C's model, trained on ESA's warning messages, expects the risk to end up. It is `null` without that pack. Treat it as a trend estimate, not a second opinion on `pc`.
+- An event seen in an earlier run keeps that run's `event_id`, even if its closest approach has moved into a different minute.
 
 ## Plan
 
@@ -85,10 +91,12 @@ The event routes accept `?source=replay` to read the 2009 replay folder instead 
 ```json
 { "times_s": [-600, -595, ..., 600],
   "primary_km": [[x, y, z], ...], "secondary_km": [[x, y, z], ...],
-  "maneuvered_km": [[x, y, z], ...], "maneuvering_id": 41917 }
+  "maneuvered_km": [[x, y, z], ...], "maneuvering_id": 41917, "what_if": false }
 ```
 
 Positions are TEME, every 5 s for 10 minutes either side of closest approach. `maneuvered_km` is the burning object's new path and is `null` when no burn is planned.
+
+`what_if_plan` is `null` except in the 2009 replay. There, the system's own decision for the collision pair is not a burn, so the burn it would have recommended is stored separately and marked as a what-if. When the plan is not a burn and a what-if exists, `maneuvered_km` and `miss_after_km` show the what-if burn and `track.what_if` is `true`. Always label it on screen as a what-if.
 
 `encounter`:
 

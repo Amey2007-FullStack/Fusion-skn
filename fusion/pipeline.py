@@ -21,12 +21,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from fusion import config
+from fusion import addons, config
 from fusion.contracts import ConjunctionEvent, ManeuverPlan, SpaceObject
 from fusion.core.ingest import load_catalog_with_stats
 from fusion.core.sat import to_utc
 from fusion.core.screen import screen, worker_count
-from fusion.maneuver.planner import plan, quick_decision
+from fusion.maneuver.planner import plan, quick_decision, slot_priority
 from fusion.risk.pc import assess
 from fusion.synthetic import make_conjunction
 
@@ -91,6 +91,20 @@ def _plan_all(
         initargs=(pickle.dumps((catalog, now, baseline)),),  # serialised once, not per worker
     ) as pool:
         return list(pool.map(_plan_one, searches))
+
+
+def _refresh_validation(folder: Path, out: Path, report: Callable[[str, float, str], None]) -> None:
+    """Compare this run with CelesTrak's list when teammate B's pack holds a recent
+    copy of it. Nothing is downloaded here, and a failure never fails the run."""
+    try:
+        from fusion import validation  # imported here: that module imports this one
+
+        result = validation.validate(run_dir=folder, out=out, download=False)
+        if result and result.get("latest_run"):
+            matched = result["latest_run"]["all_matches"]["matched"]
+            report("DONE", 90, f"Compared with CelesTrak's own list: {matched} close passes in common")
+    except Exception as error:
+        log.warning("Validation step failed: %s", error)
 
 
 def run_pipeline(
@@ -170,7 +184,7 @@ def run_pipeline(
 
         stage = "ASSESS"
         for event in events:
-            assess(event, by_id)
+            assess(event, by_id, now=t0)
         events.sort(key=lambda e: -(e.pc_max or 0.0))
         levels = {level: sum(e.risk_level == level for e in events) for level in ("RED", "AMBER", "GREEN")}
         summary["levels"] = levels
@@ -178,7 +192,10 @@ def run_pipeline(
 
         stage = "PLAN"
         reds = [e for e in events if e.risk_level == "RED"]
-        reds.sort(key=lambda e: (not e.synthetic, -(e.pc_max or 0.0)))  # the test object first
+        # the test object first, then passes where only one object can move
+        reds.sort(key=lambda e: (
+            not e.synthetic, slot_priority(by_id[e.primary_id], by_id[e.secondary_id]), -(e.pc_max or 0.0),
+        ))
         # decide cheaply which red events need a burn search, then search those in parallel
         searches: list[ConjunctionEvent] = []
         decided: dict[str, ManeuverPlan] = {}
@@ -221,8 +238,20 @@ def run_pipeline(
         write_json(folder / "catalog.json", [o.model_dump(mode="json") for o in saved])
         write_json(folder / "events.json", [e.model_dump(mode="json") for e in events])
         write_json(folder / "plans.json", [p.model_dump(mode="json") for p in plans])
+        write_json(folder / "run.json", summary)  # the alert add-on reads the mode and window from it
 
         stage = "DONE"
+        # optional add-on outputs; a replay (run_dir given) is not compared with earlier runs
+        extras = addons.after_run(folder, None if run_dir else runs_root)
+        if extras:
+            summary["addons"] = extras
+        if "alerts" in extras:
+            kinds = ", ".join(f"{n} {kind.lower().replace('_', ' ')}" for kind, n in sorted(extras["alerts"].items()))
+            report(stage, 50, f"Changes since the previous run: {kinds or 'none'}")
+        if extras.get("briefings") or extras.get("cdm"):
+            report(stage, 80, f"Wrote {extras.get('briefings', 0)} operator briefings and {extras.get('cdm', 0)} standard warning messages")
+        if not run_dir:
+            _refresh_validation(folder, Path(runs_root).parent / "validation.json", report)
         summary.update(status="DONE", duration_s=round(time.time() - started, 1), events=len(events))
         report(stage, 100, f"Run complete in {summary['duration_s']:.0f} s")
         write_json(folder / "log.json", entries)

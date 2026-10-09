@@ -10,9 +10,14 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import inspect
+import io
+import json
 import logging
 import os
+import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -74,10 +79,25 @@ def _load(pack: str, module: str, function: str) -> Optional[Callable]:
     return found
 
 
+def pack_function(pack: str, module: str, function: str) -> Optional[Callable]:
+    """A function from a pack, wrapped so that it runs with the pack's folder as
+    the working directory; None when the pack or the function is not there."""
+    found = _load(pack, module, function)
+    if found is None:
+        return None
+
+    def call(*args: Any, **kwargs: Any) -> Any:
+        with _inside(ADDONS_DIR / pack):
+            return found(*args, **kwargs)
+
+    return call
+
+
 def reset() -> None:
     """Forget loaded packs (used by tests)."""
     _functions.clear()
     _warned.clear()
+    _extended.clear()
 
 
 def available() -> dict[str, bool]:
@@ -89,20 +109,44 @@ def available() -> dict[str, bool]:
 
 
 def enrich_catalog(objs: list[SpaceObject]) -> list[SpaceObject]:
-    """Real sizes, types and status from teammate A's pack; unchanged without it."""
+    """Real sizes, types and status from teammate A's pack; unchanged without it.
+
+    Where the pack has no measured radar size it falls back to a guess by object
+    type and says so with `_has_real_rcs: False`; the radius we already have is
+    kept for those objects.
+    """
     function = _load("a_history", "enrich", "enrich_catalog")
     if function is None:
         return objs
     try:
         with _inside(ADDONS_DIR / "a_history"):
             result = function([o.model_dump(mode="json") for o in objs])
-        enriched = [SpaceObject.model_validate(item) for item in result]
-        if len(enriched) != len(objs):
-            raise ValueError(f"returned {len(enriched)} objects for {len(objs)}")
+        if len(result) != len(objs):
+            raise ValueError(f"returned {len(result)} objects for {len(objs)}")
+        enriched = []
+        for original, item in zip(objs, result):
+            if item.get("_has_real_rcs") is False:
+                item = dict(item, radius_m=original.radius_m)
+            enriched.append(SpaceObject.model_validate(item))
         return enriched
     except Exception as error:
         _warn_once("enrich", f"Add-on enrich_catalog failed, using defaults: {error}")
         return objs
+
+
+_extended: dict[int, bool] = {}
+OWN_MEASUREMENT_MAX_DAYS = 60.0
+
+
+def _takes_name_and_status(function: Callable) -> bool:
+    """Whether the pack's measured_sigma accepts the object's name and operational flag as well."""
+    key = id(function)
+    if key not in _extended:
+        try:
+            _extended[key] = len(inspect.signature(function).parameters) >= 5
+        except (TypeError, ValueError):
+            _extended[key] = False
+    return _extended[key]
 
 
 def measured_sigma(obj: SpaceObject, tle_age_days: float) -> Optional[np.ndarray]:
@@ -111,8 +155,16 @@ def measured_sigma(obj: SpaceObject, tle_age_days: float) -> Optional[np.ndarray
     if function is None:
         return None
     try:
+        # An object's own measurement describes it as it is today. For orbit data from
+        # another era (the 2009 replay) the catalogue number may even belong to a
+        # different body now, so only its kind of object is used.
+        current = abs((datetime.now(timezone.utc) - obj.epoch).total_seconds()) <= OWN_MEASUREMENT_MAX_DAYS * 86400.0
+        arguments: list[Any] = [obj.norad_id if current else 0, obj.object_type, float(tle_age_days)]
+        if _takes_name_and_status(function):
+            # lets the pack tell a Starlink from a dead satellite, which differ a hundredfold
+            arguments += [obj.name, obj.operational]
         with _inside(ADDONS_DIR / "b_trust"):
-            value = function(obj.norad_id, obj.object_type, float(tle_age_days))
+            value = function(*arguments)
         if value is None:
             return None
         sigma = np.asarray(value, dtype=float)
@@ -124,15 +176,120 @@ def measured_sigma(obj: SpaceObject, tle_age_days: float) -> Optional[np.ndarray
         return None
 
 
-def predict_final_risk(event: ConjunctionEvent) -> Optional[float]:
-    """Predicted final risk from teammate C's model, or None."""
+def predict_final_risk(event: ConjunctionEvent, now: Optional[datetime] = None) -> Optional[float]:
+    """Predicted final collision probability from teammate C's model, or None.
+
+    The model works in log10 of the probability and measures time to closest
+    approach from `run_time`, so both are converted here.
+    """
     function = _load("c_ops", "predict", "predict_final_risk")
     if function is None:
         return None
     try:
+        data = event.model_dump(mode="json")
+        if now is not None:
+            data["run_time"] = now.isoformat().replace("+00:00", "Z")
         with _inside(ADDONS_DIR / "c_ops"):
-            value: Any = function(event.model_dump(mode="json"))
-        return None if value is None else float(value)
+            value: Any = function(data)
+        if value is None:
+            return None
+        return float(min(1.0, 10.0 ** float(value)))
     except Exception as error:
         _warn_once("predict", f"Add-on predict_final_risk failed: {error}")
         return None
+
+
+def _same_kind_runs(run_dir: Path, runs_root: Path) -> list[str]:
+    """Ids of completed runs in `runs_root` with the same mode and window as `run_dir`,
+    so alerts compare like with like."""
+    def kind(folder: Path) -> Optional[tuple]:
+        try:
+            info = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+            return info.get("mode"), info.get("window_hours")
+        except (OSError, ValueError):
+            return None
+
+    wanted = kind(run_dir)
+    return sorted(
+        p.name for p in runs_root.iterdir()
+        if p.is_dir() and (p.name == run_dir.name or (p / "DONE").exists()) and kind(p) == wanted
+    )
+
+
+def _event_ids(run_dir: Path) -> list[str]:
+    return [e["event_id"] for e in json.loads((run_dir / "events.json").read_text(encoding="utf-8"))]
+
+
+def _add_alerts(run_dir: Path, runs_root: Path) -> Optional[dict[str, int]]:
+    """Teammate C's alert engine: compares this run with the previous one of the same
+    kind, then writes alerts.json and summary.json and adds history to events.json."""
+    process = _load("c_ops", "watch", "process_single_run")
+    if process is None:
+        return None
+    events_file, backup = run_dir / "events.json", run_dir / "events.json.before_alerts"
+    before = _event_ids(run_dir)
+    shutil.copyfile(events_file, backup)
+    try:
+        with _inside(ADDONS_DIR / "c_ops"), contextlib.redirect_stdout(io.StringIO()):
+            ok = process(
+                str(run_dir), str(runs_root),
+                feed_path=str(runs_root.parent / "alert_feed.json"),
+                all_runs=_same_kind_runs(run_dir, runs_root),
+            )
+        if not ok:
+            raise RuntimeError("the pack reported a failure")
+        rewritten = json.loads(events_file.read_text(encoding="utf-8"))
+        for item in rewritten:
+            ConjunctionEvent.model_validate(item)
+        if len(rewritten) != len(before):
+            raise ValueError(f"events.json came back with {len(rewritten)} events for {len(before)}")
+    except Exception:
+        os.replace(backup, events_file)  # never leave a run with a damaged events file
+        for name in ("alerts.json", "summary.json"):
+            (run_dir / name).unlink(missing_ok=True)
+        raise
+    backup.unlink()
+
+    # an event seen in an earlier run keeps that run's id; keep our plans pointing at it
+    renamed = {old: new["event_id"] for old, new in zip(before, rewritten) if old != new["event_id"]}
+    if renamed:
+        plans_file = run_dir / "plans.json"
+        plans = json.loads(plans_file.read_text(encoding="utf-8"))
+        for plan in plans:
+            plan["event_id"] = renamed.get(plan["event_id"], plan["event_id"])
+        temporary = plans_file.with_name("plans.json.tmp")
+        temporary.write_text(json.dumps(plans, indent=1), encoding="utf-8")
+        os.replace(temporary, plans_file)
+
+    counts: dict[str, int] = {}
+    for alert in json.loads((run_dir / "alerts.json").read_text(encoding="utf-8")):
+        counts[alert["kind"]] = counts.get(alert["kind"], 0) + 1
+    return counts
+
+
+def after_run(run_dir: Path | str, runs_root: Optional[Path | str] = None) -> dict[str, Any]:
+    """Let teammate C's pack add its outputs to a run whose files are written:
+    alerts and history (only when `runs_root` is given), briefings and CDM files.
+    Returns what was produced. Never raises; a failing step is skipped."""
+    run_dir = Path(run_dir)
+    produced: dict[str, Any] = {}
+    if runs_root is not None:
+        try:
+            counts = _add_alerts(run_dir, Path(runs_root))
+            if counts is not None:
+                produced["alerts"] = counts
+        except Exception as error:
+            _warn_once("alerts", f"Add-on alert step failed: {error}")
+    for key, module, function_name in (
+        ("briefings", "briefing", "generate_run_briefings"),
+        ("cdm", "cdm_export", "export_run_cdms"),
+    ):
+        function = _load("c_ops", module, function_name)
+        if function is None:
+            continue
+        try:
+            with _inside(ADDONS_DIR / "c_ops"), contextlib.redirect_stdout(io.StringIO()):
+                produced[key] = len(function(str(run_dir)))
+        except Exception as error:
+            _warn_once(key, f"Add-on {module} step failed: {error}")
+    return produced
