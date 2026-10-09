@@ -19,6 +19,7 @@ so our events between two objects that cannot manoeuvre are not expected there.
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -33,6 +34,7 @@ KINDS = ("one object cannot manoeuvre", "two working satellites of different fle
 
 VALIDATION_FILE = config.DATA_DIR / "validation.json"
 REFINE_WINDOW_S = 7.0  # the same half-window the search hands to the refinement
+LIST_MAX_AGE_HOURS = 12.0  # the pack re-downloads CelesTrak's list when its copy is older than this
 
 
 def _time(text: str) -> datetime:
@@ -101,11 +103,21 @@ def _without_pairs(result: dict, keep: int = 400) -> dict:
     return trimmed
 
 
-def validate(run_dir: Optional[Path] = None, out: Path = VALIDATION_FILE) -> Optional[dict[str, Any]]:
-    """Build the validation file; None when teammate B's pack is absent."""
+def list_is_fresh() -> bool:
+    """Whether the pack already holds a recent copy of CelesTrak's list (so no download is needed)."""
+    cached = addons.ADDONS_DIR / "b_trust" / "cache" / "socrates_minrange.csv"
+    return cached.exists() and time.time() - cached.stat().st_mtime < LIST_MAX_AGE_HOURS * 3600.0
+
+
+def validate(
+    run_dir: Optional[Path] = None, out: Path = VALIDATION_FILE, download: bool = True
+) -> Optional[dict[str, Any]]:
+    """Build the validation file; None when teammate B's pack is absent. With
+    `download=False` nothing is fetched: if the pack has no recent copy of
+    CelesTrak's list, the existing file is left as it is and None is returned."""
     compare = addons.pack_function("b_trust", "validate", "compare")
     load_socrates = addons.pack_function("b_trust", "socrates", "load_socrates")
-    if compare is None or load_socrates is None:
+    if compare is None or load_socrates is None or not (download or list_is_fresh()):
         return None
     result: dict[str, Any] = {"generated": _iso(datetime.now(timezone.utc)), "source": "CelesTrak SOCRATES"}
 
