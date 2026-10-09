@@ -17,7 +17,7 @@ import logging
 import os
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -135,6 +135,7 @@ def enrich_catalog(objs: list[SpaceObject]) -> list[SpaceObject]:
 
 
 _extended: dict[int, bool] = {}
+OWN_MEASUREMENT_MAX_DAYS = 60.0
 
 
 def _takes_name_and_status(function: Callable) -> bool:
@@ -154,7 +155,11 @@ def measured_sigma(obj: SpaceObject, tle_age_days: float) -> Optional[np.ndarray
     if function is None:
         return None
     try:
-        arguments: list[Any] = [obj.norad_id, obj.object_type, float(tle_age_days)]
+        # An object's own measurement describes it as it is today. For orbit data from
+        # another era (the 2009 replay) the catalogue number may even belong to a
+        # different body now, so only its kind of object is used.
+        current = abs((datetime.now(timezone.utc) - obj.epoch).total_seconds()) <= OWN_MEASUREMENT_MAX_DAYS * 86400.0
+        arguments: list[Any] = [obj.norad_id if current else 0, obj.object_type, float(tle_age_days)]
         if _takes_name_and_status(function):
             # lets the pack tell a Starlink from a dead satellite, which differ a hundredfold
             arguments += [obj.name, obj.operational]
