@@ -31,12 +31,35 @@
   .reveal.in { opacity: 1; transform: none; }
   .reveal.d1 { transition-delay: .12s; } .reveal.d2 { transition-delay: .24s; } .reveal.d3 { transition-delay: .36s; } .reveal.d4 { transition-delay: .48s; }
 
-  /* hero */
-  .hero { border-top: 0; padding-top: 0; padding-bottom: 0; justify-content: flex-end; overflow: hidden; }
+  .top .links { display: flex; gap: 26px; align-items: center; }
+  .top button { background: none; border: 0; padding: 0; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; opacity: .7; }
+  .top button[aria-pressed="true"] { opacity: 1; }
+
+  /* opening: the scene stays on screen while the years run */
+  .hero { display: block; height: 340vh; padding: 0; border-top: 0; }
+  .stage { position: sticky; top: 0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 var(--pad); }
   .hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .hero .inner { position: relative; padding-bottom: 9vh; }
-  .hero h1 { font-size: clamp(88px, 23vw, 400px); line-height: .82; letter-spacing: -.045em; font-weight: 700; margin: 0 0 0 -.04em; }
+  .hero .inner { position: relative; padding-bottom: 9vh; will-change: opacity, transform; }
+  .hero h1, .years .year { font-size: clamp(88px, 23vw, 400px); line-height: .82; letter-spacing: -.045em; font-weight: 700; margin: 0 0 0 -.04em; }
   .hero p { font-size: clamp(18px, 2vw, 30px); max-width: 30ch; margin: 28px 0 0; }
+  .years { position: absolute; left: var(--pad); right: var(--pad); bottom: 9vh; opacity: 0; pointer-events: none; }
+  .years .year { font-variant-numeric: tabular-nums; }
+
+  /* slides that move sideways as you scroll down */
+  .slides { display: block; height: 320vh; padding: 0; }
+  .slides .viewport { position: sticky; top: 0; height: 100vh; overflow: hidden; }
+  .slides .track { display: flex; width: 300vw; height: 100%; will-change: transform; }
+  .slide { width: 100vw; padding: 0 var(--pad); display: flex; flex-direction: column; justify-content: center; }
+  .slide .huge { font-size: clamp(110px, 26vw, 460px); font-weight: 700; line-height: .86; letter-spacing: -.05em; }
+  .slide .unit { font-size: .2em; letter-spacing: 0; color: var(--soft); margin-left: .2em; font-weight: 500; }
+  .slide .line { font-size: clamp(24px, 3.4vw, 54px); font-weight: 600; letter-spacing: -.02em; margin: 26px 0 0; max-width: 20ch; }
+  .slides .dots { position: absolute; left: var(--pad); bottom: 7vh; display: flex; gap: 10px; }
+  .slides .dots i { width: 34px; height: 2px; background: var(--dim); transition: background .3s; }
+  .slides .dots i.on { background: var(--ink); }
+
+  .aside { border-left: 1px solid var(--ink); padding: 4px 0 4px 26px; margin: 52px 0 0; max-width: 50ch; }
+  .aside .label { margin: 0 0 12px; }
+  .aside p { font-size: clamp(21px, 2.1vw, 31px); line-height: 1.24; letter-spacing: -.01em; margin: 0; }
   .cue { position: absolute; right: var(--pad); bottom: 9vh; font-size: 12px; letter-spacing: .24em; text-transform: uppercase; color: var(--soft); writing-mode: vertical-rl; }
   .cue::after { content: ""; display: block; width: 1px; height: 64px; background: var(--ink); margin: 14px auto 0; animation: drop 2.2s ease-in-out infinite; transform-origin: top; }
   @keyframes drop { 0% { transform: scaleY(0); } 50% { transform: scaleY(1); } 100% { transform: scaleY(1); opacity: 0; } }
@@ -123,6 +146,13 @@
   }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
+    .hero, .slides { height: auto; }
+    .stage { position: relative; }
+    .years { display: none; }
+    .slides .viewport { position: static; height: auto; overflow: visible; }
+    .slides .track { display: block; width: auto; }
+    .slide { width: auto; min-height: 70vh; border-top: 1px solid var(--line); }
+    .slides .dots { display: none; }
     .reveal, .bar .fill, .bar .val, .decision svg .path, .decision svg .moved { transition: none; }
     .cue::after, .live.on::before { animation: none; }
   }
@@ -130,22 +160,39 @@
 </head>
 <body>
 <div class="progress"><i id="progress"></i></div>
-<header class="top"><b>EDITH</b><span class="mono" id="chapter">00 / 14</span><a href="/">Live console</a></header>
+<header class="top"><b>EDITH</b><span class="mono" id="chapter">00 / 14</span><span class="links"><button id="sound" type="button" aria-pressed="false">Sound off</button><a href="/">Live console</a></span></header>
 
-<section class="hero" data-n="00">
-  <canvas id="sky" aria-hidden="true"></canvas>
-  <div class="inner">
-    <p class="label reveal">Collision avoidance for low Earth orbit</p>
-    <h1 class="reveal d1">EDITH</h1>
-    <p class="reveal d2">Every tracked object. Every close pass. One decision: move, or wait.</p>
+<section class="hero" data-n="00" id="hero">
+  <div class="stage">
+    <canvas id="sky" aria-hidden="true"></canvas>
+    <div class="inner" id="hero-title">
+      <p class="label reveal">Collision avoidance for low Earth orbit</p>
+      <h1 class="reveal d1">EDITH</h1>
+      <p class="reveal d2">Every tracked object. Every close pass. One decision: move, or wait.</p>
+    </div>
+    <div class="years" id="hero-years" aria-hidden="true">
+      <div class="year" id="year">1957</div>
+      <p><span class="mono" id="year-objects">0</span> of today's tracked objects had been launched by this year</p>
+    </div>
+    <div class="cue" id="cue">Scroll to begin</div>
   </div>
-  <div class="cue">Scroll to begin</div>
 </section>
 
 <section data-n="01">
   <p class="label reveal">01 &nbsp; The sky above us</p>
   <h2 class="say reveal d1">Space is not empty.</h2>
   <p class="body reveal d2">About <strong>30,000 tracked objects</strong> circle the Earth below 2,000 km. Each one covers <strong>7.5 km every second</strong>. When two of them cross paths they can meet at 15 km a second. At that speed a loose bolt destroys a satellite, and every crash leaves thousands of new pieces behind.</p>
+</section>
+
+<section class="slides" data-n="01" id="slides" aria-label="How fast 7.5 kilometres a second is">
+  <div class="viewport">
+    <div class="track" id="slide-track">
+      <article class="slide"><p class="label">How fast is 7.5 km a second</p><div class="huge mono">2.5<span class="unit">min</span></div><p class="line">Mumbai to Delhi.</p></article>
+      <article class="slide"><p class="label">How fast is 7.5 km a second</p><div class="huge mono">95<span class="unit">min</span></div><p class="line">Once around the whole Earth.</p></article>
+      <article class="slide"><p class="label">And when two meet head-on</p><div class="huge mono">15<span class="unit">km/s</span></div><p class="line">More than ten times the speed of a rifle bullet.</p></article>
+    </div>
+    <div class="dots" id="slide-dots" aria-hidden="true"><i class="on"></i><i></i><i></i></div>
+  </div>
 </section>
 
 <section data-n="02">
@@ -175,6 +222,7 @@
     <div class="tile reveal d3"><div class="value mono" data-count="1571">0</div><div class="what">spent rocket bodies</div></div>
   </div>
   <p class="note reveal">From the public catalogues of CelesTrak and Space-Track. Anything smaller than about 10 cm is not tracked by anyone publicly.</p>
+  <aside class="aside reveal"><p class="label">Worth knowing</p><p>More than half of everything in low Earth orbit today was launched since 2021.</p></aside>
 </section>
 
 <section data-n="04">
@@ -267,6 +315,7 @@
   </div>
   <p class="note reveal">Typical error along the direction of travel after one day, from 325,558 pairs of orbit records of 768 objects. The bars share one scale.</p>
   <p class="body reveal">So EDITH plans burns where the data can be trusted, <strong>and says so where it cannot.</strong></p>
+  <aside class="aside reveal"><p class="label">Worth knowing</p><p>Of 427 close passes between satellites of one fleet that CelesTrak listed a day earlier, one was still there in our run.</p></aside>
 </section>
 
 <section data-n="10">
@@ -279,6 +328,7 @@
     <div class="tile reveal d3"><div class="value">Amber</div><div class="what">its rating. Not red</div></div>
   </div>
   <p class="body reveal">Public data said they would miss. They did not. <strong>That is why EDITH ranks every pass by the worst case, and why better data matters more than better software.</strong></p>
+  <aside class="aside reveal"><p class="label">Worth knowing</p><p>The largest pieces of both satellites are still in orbit, still listed under the names Iridium 33 and Cosmos 2251.</p></aside>
 </section>
 
 <section data-n="11">
@@ -367,14 +417,38 @@ const chapterWatch = new IntersectionObserver(entries => entries.forEach(e => {
 }), { rootMargin: "-45% 0px -45% 0px" });
 chapters.forEach(s => chapterWatch.observe(s));
 
-// progress bar and the timeline's line
+// Today's tracked objects by the year they were launched, 1957 to 2026, counted from our own catalogue.
+const LAUNCHED_BY = [0, 3, 8, 19, 207, 227, 267, 318, 688, 826, 880, 1016, 1107, 1447, 1573, 1681, 1926, 2151, 2484, 2858, 3113, 3382, 3477, 3555, 4055, 4247, 4348, 4481, 4629, 4769, 5038, 5233, 5360, 5567, 5960, 6216, 6920, 7074, 7248, 7302, 7495, 7603, 9777, 10196, 10268, 10384, 10448, 10511, 10555, 10656, 10750, 10899, 10985, 11137, 11304, 11400, 11568, 11749, 11843, 11936, 12076, 12275, 12416, 12783, 13800, 16152, 18437, 21463, 25791, 29161];
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const smooth = (a, b, x) => { const k = clamp01((x - a) / (b - a)); return k * k * (3 - 2 * k); };
+const progressOf = el => { const span = el.offsetHeight - innerHeight; return span > 0 ? clamp01((scrollY - el.offsetTop) / span) : 0; };
+const yearIndex = p => Math.round((LAUNCHED_BY.length - 1) * clamp01((p - 0.22) / 0.7));
+let heroProgress = 0;
+
+// progress bar, the opening sequence, the sideways slides and the timeline's line
 const timeline = $("timeline"), timelineFill = timeline.querySelector(".fill");
+const hero = $("hero"), slides = $("slides"), slideDots = [...$("slide-dots").children];
 function onScroll() {
   const max = document.documentElement.scrollHeight - innerHeight;
   $("progress").style.transform = "scaleX(" + (max > 0 ? scrollY / max : 0) + ")";
   const box = timeline.getBoundingClientRect();
   const done = Math.max(0, Math.min(1, (innerHeight * 0.7 - box.top) / box.height));
   timelineFill.style.height = (done * 100) + "%";
+  if (reduced) return;
+
+  heroProgress = progressOf(hero);
+  const leaving = smooth(0.03, 0.15, heroProgress);
+  $("hero-title").style.opacity = 1 - leaving;
+  $("hero-title").style.transform = "translateY(" + (-60 * leaving) + "px)";
+  $("cue").style.opacity = 1 - leaving;
+  $("hero-years").style.opacity = smooth(0.16, 0.24, heroProgress);
+  const index = yearIndex(heroProgress);
+  $("year").textContent = 1957 + index;
+  $("year-objects").textContent = fmt(LAUNCHED_BY[index]);
+
+  const across = progressOf(slides);
+  $("slide-track").style.transform = "translateX(" + (-across * 2 * innerWidth) + "px)";
+  slideDots.forEach((dot, i) => dot.classList.toggle("on", i === Math.round(across * 2)));
 }
 addEventListener("scroll", onScroll, { passive: true });
 addEventListener("resize", onScroll);
@@ -410,9 +484,25 @@ barWatch.observe($("bars"));
   let w = 0, h = 0, ratio = 1, visible = true, t = 0;
   const rand = (a, b) => a + Math.random() * (b - a);
   const stars = Array.from({ length: 220 }, () => [Math.random(), Math.random(), rand(0.2, 0.9)]);
-  const objects = Array.from({ length: 170 }, () => ({
+  const FULL = 900, CALM = 170;  // points when the sky is full, and behind the title
+  const objects = Array.from({ length: FULL }, () => ({
     r: rand(1.1, 1.75), tilt: rand(0, Math.PI), node: rand(0, Math.PI * 2), phase: rand(0, Math.PI * 2), size: rand(0.7, 1.9),
   }));
+  // behind the title a calm sky; it empties, then fills year by year as the page scrolls
+  function howMany() {
+    const p = heroProgress;
+    if (p < 0.12) return CALM;
+    if (p < 0.2) return Math.round(CALM * (1 - (p - 0.12) / 0.08));
+    return Math.round(FULL * LAUNCHED_BY[yearIndex(p)] / LAUNCHED_BY[LAUNCHED_BY.length - 1]);
+  }
+  function place(o, spin, time) {
+    const u = o.phase + time * Math.pow(o.r, -1.5) * 0.35, node = o.node + spin;
+    return [
+      o.r * (Math.cos(u) * Math.cos(node) - Math.sin(u) * Math.sin(node) * Math.cos(o.tilt)),
+      o.r * (Math.cos(u) * Math.sin(node) + Math.sin(u) * Math.cos(node) * Math.cos(o.tilt)),
+      o.r * Math.sin(u) * Math.sin(o.tilt),
+    ];
+  }
   function resize() {
     ratio = Math.min(2, devicePixelRatio || 1);
     w = canvas.clientWidth; h = canvas.clientHeight;
@@ -423,26 +513,21 @@ barWatch.observe($("bars"));
     ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = "#fff";
     for (const [x, y, a] of stars) { ctx.globalAlpha = a * 0.5; ctx.fillRect(x * w, y * h, 1, 1); }
-    const R = Math.min(w, h) * 0.3, cx = w * 0.68, cy = h * 0.44;
-    for (const o of objects) {
-      const u = o.phase + t * Math.pow(o.r, -1.5) * 0.35;
-      const x = o.r * (Math.cos(u) * Math.cos(o.node) - Math.sin(u) * Math.sin(o.node) * Math.cos(o.tilt));
-      const y = o.r * (Math.cos(u) * Math.sin(o.node) + Math.sin(u) * Math.cos(o.node) * Math.cos(o.tilt));
-      const z = o.r * Math.sin(u) * Math.sin(o.tilt);
+    // as the years run, the view pulls back a little and turns
+    const away = smooth(0.2, 0.9, heroProgress), spin = heroProgress * 1.4;
+    const R = Math.min(w, h) * (0.3 - 0.07 * away), cx = w * (0.68 - 0.1 * away), cy = h * 0.44;
+    const points = objects.slice(0, howMany()).map(o => [place(o, spin, t), o.size]);
+    for (const [[x, y, z], size] of points) {
       if (z < 0 && x * x + y * y < 1) continue;  // behind the Earth
       ctx.globalAlpha = z < 0 ? 0.28 : 0.95;
-      ctx.beginPath(); ctx.arc(cx + x * R, cy - y * R, o.size, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + x * R, cy - y * R, size, 0, Math.PI * 2); ctx.fill();
     }
     ctx.globalAlpha = 1;
     ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillStyle = "#fff";
-    for (const o of objects) {  // the ones in front of the Earth, drawn over it
-      const u = o.phase + t * Math.pow(o.r, -1.5) * 0.35;
-      const x = o.r * (Math.cos(u) * Math.cos(o.node) - Math.sin(u) * Math.sin(o.node) * Math.cos(o.tilt));
-      const y = o.r * (Math.cos(u) * Math.sin(o.node) + Math.sin(u) * Math.cos(o.node) * Math.cos(o.tilt));
-      const z = o.r * Math.sin(u) * Math.sin(o.tilt);
-      if (z >= 0 && x * x + y * y < 1) { ctx.beginPath(); ctx.arc(cx + x * R, cy - y * R, o.size, 0, Math.PI * 2); ctx.fill(); }
+    for (const [[x, y, z], size] of points) {  // the ones in front of the Earth, drawn over it
+      if (z >= 0 && x * x + y * y < 1) { ctx.beginPath(); ctx.arc(cx + x * R, cy - y * R, size, 0, Math.PI * 2); ctx.fill(); }
     }
   }
   function frame() { if (visible) { t += 0.016; draw(); } requestAnimationFrame(frame); }
@@ -499,6 +584,43 @@ barWatch.observe($("bars"));
   addEventListener("resize", () => { resize(); draw(); });
   reset(); resize(); draw();
   if (!reduced) requestAnimationFrame(frame);
+})();
+
+// a quiet drone made in the browser from three low tones; off until asked for
+(function sound() {
+  const button = $("sound");
+  let audio = null, volume = null;
+  button.addEventListener("click", () => {
+    const on = button.getAttribute("aria-pressed") !== "true";
+    if (on && !audio) {
+      audio = new (window.AudioContext || window.webkitAudioContext)();
+      volume = audio.createGain();
+      volume.gain.value = 0;
+      const filter = audio.createBiquadFilter();
+      filter.type = "lowpass";
+      filter.frequency.value = 420;
+      [55, 82.5, 110.4].forEach((hertz, i) => {
+        const tone = audio.createOscillator(), level = audio.createGain();
+        tone.type = i ? "sine" : "triangle";
+        tone.frequency.value = hertz;
+        level.gain.value = i ? 0.5 : 0.8;
+        tone.connect(level).connect(filter);
+        tone.start();
+      });
+      const sway = audio.createOscillator(), depth = audio.createGain();
+      sway.frequency.value = 0.07;
+      depth.gain.value = 140;
+      sway.connect(depth).connect(filter.frequency);
+      sway.start();
+      filter.connect(volume).connect(audio.destination);
+    }
+    if (audio) {
+      audio.resume();
+      volume.gain.linearRampToValueAtTime(on ? 0.05 : 0, audio.currentTime + 1.2);
+    }
+    button.setAttribute("aria-pressed", String(on));
+    button.textContent = on ? "Sound on" : "Sound off";
+  });
 })();
 
 // live numbers from the running system, when this page is served by it
