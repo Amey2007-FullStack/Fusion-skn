@@ -175,3 +175,10 @@ def test_scheduler_fires_again_and_again():
     finally:
         monitor.stop()
     assert len(calls) >= 3 and all(0.3 < b - a < 0.8 for a, b in zip(calls, calls[1:]))
+
+
+def test_events_carry_their_plan_decision_and_can_be_filtered_by_it(client):
+    events = client.get("/events").json()
+    assert events[0]["plan_decision"] == "MANEUVER"
+    assert len(client.get("/events?plan=maneuver").json()) == 1
+    assert client.get("/events?plan=MONITOR").json() == []

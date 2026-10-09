@@ -12,10 +12,10 @@ All times are UTC ISO 8601. Distances are km, speeds km/s, delta-v m/s. Results 
 | `GET /run/{run_id}/status` | `{"run_id", "status", "stage", "percent", "log", "error"}`. `status` is `RUNNING`, `DONE` or `FAILED` |
 | `GET /monitor` | `{"running", "current_run", "last_run", "run_count", "next_run", "interval_hours", "scheduler_on"}` |
 | `GET /latest` | The latest run's `run.json`: mode, window, statistics, risk-level counts, duration. 404 before the first run |
-| `GET /events?limit=50&level=RED` | List of events, highest worst-case probability first. `level` is optional |
+| `GET /events?limit=50&level=RED&plan=MANEUVER` | List of events, highest worst-case probability first. `level` and `plan` are optional filters. Each event carries `plan_decision` (`MANEUVER`, `MONITOR` or `null` for green events), so a table can mark the passes with a burn planned without a second request |
 | `GET /events/{event_id}` | `{"event", "plan", "what_if_plan", "track", "encounter"}` (see below) |
 | `GET /events/{event_id}/plan` | The plan for one event. 404 for green events, which have none |
-| `GET /alerts?since=<run_id>` | Alerts for the latest run, or for all runs after `since`. Written by teammate C's alert engine at the end of each run; empty without that pack |
+| `GET /alerts?since=<run_id>&kind=NEW&severity=CRITICAL&limit=20` | Alerts for the latest run, or for all runs after `since`. All parameters are optional. `kind` is `NEW`, `ESCALATED`, `DOWNGRADED`, `CLEARED` or `PLAN_READY`; `severity` is `CRITICAL`, `WARNING` or `INFO`. A full-sky run produces hundreds of alerts, so filter them. Written by teammate C's alert engine at the end of each run; empty without that pack |
 | `GET /summary` | The latest run's summary from teammate C's pack. 404 without it |
 | `GET /objects/{norad_id}/track?hours=3&step_s=30` | `{"norad_id", "name", "object_type", "start", "step_s", "positions_km"}`, starting now. Only objects in the latest run's `catalog.json` |
 | `GET /replay/2009` | `{"run", "events", "plans", "what_if_plans", "predictions", "notes"}`. 404 until the replay is built with `python -m fusion.replay.replay_2009` |
