@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib.util
+import inspect
 import io
 import json
 import logging
@@ -78,10 +79,25 @@ def _load(pack: str, module: str, function: str) -> Optional[Callable]:
     return found
 
 
+def pack_function(pack: str, module: str, function: str) -> Optional[Callable]:
+    """A function from a pack, wrapped so that it runs with the pack's folder as
+    the working directory; None when the pack or the function is not there."""
+    found = _load(pack, module, function)
+    if found is None:
+        return None
+
+    def call(*args: Any, **kwargs: Any) -> Any:
+        with _inside(ADDONS_DIR / pack):
+            return found(*args, **kwargs)
+
+    return call
+
+
 def reset() -> None:
     """Forget loaded packs (used by tests)."""
     _functions.clear()
     _warned.clear()
+    _extended.clear()
 
 
 def available() -> dict[str, bool]:
@@ -118,14 +134,32 @@ def enrich_catalog(objs: list[SpaceObject]) -> list[SpaceObject]:
         return objs
 
 
+_extended: dict[int, bool] = {}
+
+
+def _takes_name_and_status(function: Callable) -> bool:
+    """Whether the pack's measured_sigma accepts the object's name and operational flag as well."""
+    key = id(function)
+    if key not in _extended:
+        try:
+            _extended[key] = len(inspect.signature(function).parameters) >= 5
+        except (TypeError, ValueError):
+            _extended[key] = False
+    return _extended[key]
+
+
 def measured_sigma(obj: SpaceObject, tle_age_days: float) -> Optional[np.ndarray]:
     """Measured RTN position sigmas (km) from teammate B's pack, or None."""
     function = _load("b_trust", "tle_error", "measured_sigma")
     if function is None:
         return None
     try:
+        arguments: list[Any] = [obj.norad_id, obj.object_type, float(tle_age_days)]
+        if _takes_name_and_status(function):
+            # lets the pack tell a Starlink from a dead satellite, which differ a hundredfold
+            arguments += [obj.name, obj.operational]
         with _inside(ADDONS_DIR / "b_trust"):
-            value = function(obj.norad_id, obj.object_type, float(tle_age_days))
+            value = function(*arguments)
         if value is None:
             return None
         sigma = np.asarray(value, dtype=float)
